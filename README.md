@@ -9,7 +9,7 @@ The project contains two pipelines:
 | Pipeline | Entry Point | Output | Purpose |
 |----------|-------------|--------|---------|
 | Top Diagnoses | `main.py` | `output/top_diagnoses.txt` | Finds the top 5 most frequent diagnosis codes |
-| Data Profiling | `profiling_pipeline.py` | `output/profiling_report.txt` | Full profiling report with 6 sections |
+| Data Profiling | `profiling.py` | `output/profiling_report.txt` | Full profiling report with 6 sections |
 
 ### Profiling Report Sections
 
@@ -25,8 +25,8 @@ The project contains two pipelines:
 ```
 ├── main.py                  # Entry point for the top diagnoses pipeline
 ├── pipeline.py              # Pipeline logic for top diagnoses
-├── profiling_pipeline.py    # Entry point for the profiling pipeline
-├── profiling_logic.py       # Pipeline logic for data profiling
+├── profiling.py             # Entry point for the profiling pipeline
+├── profiling_pipeline.py    # Pipeline logic for data profiling
 ├── transforms.py            # Reusable custom PTransform
 ├── requirements.txt
 ├── input/
@@ -54,7 +54,7 @@ pip install apache-beam
 
 ```bash
 # Run the profiling pipeline
-python profiling_pipeline.py
+python profiling.py
 
 # Run the top diagnoses pipeline
 python main.py
