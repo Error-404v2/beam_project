@@ -37,7 +37,7 @@ def build_pipeline(p):
     )
 
     # --- Branch B: Process the Data ---
-    (
+    formatted_results = (
         p
         # 1. Read the data
         | "Read Diagnoses CSV" >> beam.io.ReadFromText(
@@ -62,7 +62,10 @@ def build_pipeline(p):
         
         # 7. Format the output string using the lookup dictionary as a Side Input!
         | "Format Output" >> beam.Map(format_result, lookup_dict=beam.pvalue.AsDict(lookup_data))
-        
-        # 8. Write Results
-        | "Write Results" >> beam.io.WriteToText("output/top_diagnoses", file_name_suffix=".txt")
     )
+    
+    # 8. Branch B1: Print Results directly to the terminal
+    formatted_results | "Print Results" >> beam.Map(print)
+    
+    # 9. Branch B2: Write Results to the exact target file
+    formatted_results | "Write Results" >> beam.io.WriteToText("output/top_diagnoses.txt", shard_name_template="")
