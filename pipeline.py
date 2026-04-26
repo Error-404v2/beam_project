@@ -12,17 +12,25 @@ def build_pipeline(p, output_file):
     """Builds the full profiling pipeline and writes results."""
 
     # Read and parse the three CSV files
-    patients = (
+    patients_parsed = (
         p
         | "Read Patients" >> beam.io.ReadFromText(PATIENTS_CSV, skip_header_lines=1)
-        | "Parse Patient" >> beam.Map(parse_patient)
+        | "Parse Patient" >> beam.FlatMap(parse_patient).with_outputs("invalid")
     )
+    patients = patients_parsed[None]
+    dlq_patients = patients_parsed.invalid
 
-    diagnoses = (
+    dlq_patients | "Write DLQ Patients" >> beam.io.WriteToText("output/dlq_patients.txt", shard_name_template="")
+
+    diagnoses_parsed = (
         p
         | "Read Diagnoses" >> beam.io.ReadFromText(DIAGNOSES_CSV, skip_header_lines=1)
-        | "Parse Diagnosis" >> beam.Map(parse_diagnosis)
+        | "Parse Diagnosis" >> beam.FlatMap(parse_diagnosis).with_outputs("invalid")
     )
+    diagnoses = diagnoses_parsed[None]
+    dlq_diagnoses = diagnoses_parsed.invalid
+
+    dlq_diagnoses | "Write DLQ Diagnoses" >> beam.io.WriteToText("output/dlq_diagnoses.txt", shard_name_template="")
 
     # This will be used as a Side Input (like a lookup table)
     lookup = (
