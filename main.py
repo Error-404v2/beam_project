@@ -1,32 +1,51 @@
 """
 Main module.
 
-Entry point: parses args, creates Pipeline, runs it.
+Entry point: creates Pipeline, runs it.
 """
+import os
+import shutil
+
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from pipeline import build_pipeline
-from config import OUTPUT_FILE
-import os
-import argparse
+from config import GENERATED_OUTPUTS, OUTPUT_FILE
+
+def clear_beam_temp_dirs():
+    """Remove Beam temporary directories left from local runs."""
+    output_dir = os.path.dirname(OUTPUT_FILE)
+
+    def make_writable_and_retry(func, path, _):
+        os.chmod(path, 0o700)
+        func(path)
+
+    for name in os.listdir(output_dir):
+        path = os.path.join(output_dir, name)
+        if name.startswith("beam-temp-") and os.path.isdir(path):
+            shutil.rmtree(path, onerror=make_writable_and_retry)
+
+
+def clear_generated_outputs():
+    """Remove generated files so Beam reruns do not emit overwrite warnings."""
+    for path in GENERATED_OUTPUTS:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
+    clear_beam_temp_dirs()
 
 def run():
     """Create the Beam pipeline, execute profiling, and save the report."""
-    
-    # Standard argparse setup
-    parser = argparse.ArgumentParser()
-    # Add any custom pipeline options here in the future
-    known_args, pipeline_args = parser.parse_known_args()
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
-    # Clear previous output
-    try:
-        os.remove(OUTPUT_FILE)
-    except OSError:
-        pass
+    clear_generated_outputs()
 
-    options = PipelineOptions(pipeline_args)
+    options = PipelineOptions()
     with beam.Pipeline(options=options) as p:
         build_pipeline(p, OUTPUT_FILE)
+
+    clear_beam_temp_dirs()
 
     print(f"\nReport saved to {OUTPUT_FILE}")
 

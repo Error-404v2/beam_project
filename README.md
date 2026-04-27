@@ -1,92 +1,102 @@
 # Hospital Data Profiling with Apache Beam
 
-A batch data pipeline built with **Apache Beam** that reads hospital records from the [MIMIC-IV Clinical Database Demo](https://physionet.org/content/mimic-iv-demo/2.2/) and generates a data profiling report.
+A batch data pipeline built with **Apache Beam**. It reads hospital records from the
+[MIMIC-IV Clinical Database Demo](https://physionet.org/content/mimic-iv-demo/2.2/)
+and generates a plain-text data profiling report.
 
 ## What It Does
 
-The project contains two pipelines:
+The project contains one profiling pipeline:
 
-| Pipeline | Entry Point | Output | Purpose |
-|----------|-------------|--------|---------|
-| Top Diagnoses | `main.py` | `output/top_diagnoses.txt` | Finds the top 5 most frequent diagnosis codes |
-| Data Profiling | `profiling.py` | `output/profiling_report.txt` | Full profiling report with 6 sections |
+| Entry Point | Output | Purpose |
+| --- | --- | --- |
+| `main.py` | `output/profiling_report.txt` | Generates a six-section profiling report for the MIMIC-IV demo hospital data |
 
 ### Profiling Report Sections
 
-1. **Dataset Overview** — total patients, total diagnosis records, unique ICD codes
-2. **Gender Distribution** — count of male vs female patients
-3. **Age Distribution** — min, max, and average patient age
-4. **Top 10 Diagnoses** — most frequent ICD codes with readable names
-5. **Diagnoses per Patient** — average number of diagnoses per patient
-6. **Mortality Insight** — alive vs deceased count and mortality rate
+1. **Dataset Overview** - total patients, diagnosis records, and unique ICD code/version pairs
+2. **Gender Distribution** - count of male vs female patients
+3. **Age Distribution** - minimum, maximum, and average patient age
+4. **Top 10 Diagnoses** - most frequent ICD code/version pairs with readable names
+5. **Diagnoses per Patient** - average number of diagnoses per patient
+6. **Mortality Insight** - alive vs deceased count and mortality rate
 
 ## Project Structure
 
-```
-├── main.py                  # Entry point for the top diagnoses pipeline
-├── pipeline.py              # Pipeline logic for top diagnoses
-├── profiling.py             # Entry point for the profiling pipeline
-├── profiling_pipeline.py    # Pipeline logic for data profiling
-├── transforms.py            # Reusable custom PTransform
-├── requirements.txt
-├── input/
-│   └── data/                # MIMIC-IV demo CSV files
-└── output/
-    ├── top_diagnoses.txt
-    └── profiling_report.txt
+```text
+main.py                 # Entry point for the profiling pipeline
+pipeline.py             # Apache Beam graph
+schemas.py              # CSV parsers and output formatting helpers
+transforms.py           # Reusable CombineFn implementations
+config.py               # Input and output paths
+requirements.txt        # Python dependencies
+input/data/             # MIMIC-IV demo CSV files
+output/                 # Generated reports and dead-letter queue files
 ```
 
 ## Dataset
 
-Uses the **MIMIC-IV Clinical Database Demo v2.2**, which contains de-identified hospital records for 100 patients. The pipeline reads three CSV files:
+The pipeline uses the **MIMIC-IV Clinical Database Demo v2.2**, which contains
+de-identified hospital records for 100 patients. It reads three CSV files:
 
-- `patients.csv` — patient demographics (gender, age, date of death)
-- `diagnoses_icd.csv` — diagnosis records linked to hospital admissions
-- `d_icd_diagnoses.csv` — lookup table mapping ICD codes to readable names
+- `patients.csv` - patient demographics: gender, anchor age, and date of death
+- `diagnoses_icd.csv` - diagnosis records linked to hospital admissions
+- `d_icd_diagnoses.csv` - lookup table mapping ICD code/version pairs to readable names
+
+ICD code and ICD version are treated together as the lookup key. This avoids mixing
+ICD-9 and ICD-10 descriptions when the same code text exists in both versions.
 
 ## Setup
 
+The project is tested with the `DataEng` conda environment.
+
 ```bash
-pip install apache-beam
+conda activate DataEng
+python -m pip install -r requirements.txt
 ```
 
 ## How to Run
 
 ```bash
-# Run the profiling pipeline
-python profiling.py
-
-# Run the top diagnoses pipeline
 python main.py
 ```
+
+The run writes:
+
+- `output/profiling_report.txt`
+- `output/dlq_patients.txt`
+- `output/dlq_diagnoses.txt`
+- `output/dlq_lookup.txt`
+
+The DLQ files are empty when all parsed rows pass validation.
 
 ## Beam Concepts Used
 
 | Concept | What It Does |
-|---------|-------------|
+| --- | --- |
 | `ReadFromText` | Reads CSV files line by line |
-| `Map` | Transforms each element (1 input → 1 output) |
-| `FlatMap` | Transforms each element (1 input → 0 or more outputs) |
+| `FlatMap` | Parses records and routes invalid rows to tagged DLQ outputs |
+| `Map` | Transforms each element |
 | `Filter` | Keeps elements that match a condition |
 | `CombinePerKey(sum)` | Groups by key and sums values |
 | `CombineGlobally` | Aggregates all elements into one result |
-| `CombineFn` | Custom aggregation logic (CountFn, AverageFn, MinMaxFn) |
-| `Top.Of` | Finds the top N elements |
+| `CombineFn` | Custom aggregation logic: `CountFn`, `AverageFn`, `MinMaxFn` |
+| `Top.Of` | Finds the top N elements with a deterministic tie-breaker |
 | `Distinct` | Removes duplicate elements |
-| `Side Input (AsDict)` | Passes a lookup table to a transform |
-| `WriteToText` | Writes results to a text file |
+| `Side Input (AsDict)` | Passes the ICD lookup table to a transform |
+| `WriteToText` | Writes the report and DLQ files |
 
 ## Sample Output
 
-```
+```text
 ============================================================
         DATA PROFILING REPORT  -  MIMIC-IV Demo
 ============================================================
 
 1. DATASET OVERVIEW
-  Total patients        : 100
-  Total diagnosis records: 4506
-  Unique ICD codes used  : 1472
+  Total patients                 : 100
+  Total diagnosis records        : 4506
+  Unique ICD code/version pairs  : 1474
 
 2. GENDER DISTRIBUTION
   Female  : 43
@@ -98,13 +108,13 @@ python main.py
   Average age : 61.8
 
 4. TOP 10 DIAGNOSES
-        Code  |  Freq       |  Description
-    --------------------------------------------------
-        4019  |    68 times  |  Unspecified essential hypertension
-        E785  |    57 times  |  Hyperlipidemia, unspecified
-        2724  |    55 times  |  Other and unspecified hyperlipidemia
-        E039  |    47 times  |  Hypothyroidism, unspecified
-        Z794  |    37 times  |  Long term (current) use of insulin
+        Code  |  Version  |  Freq       |  Description
+    ------------------------------------------------------------------------
+        4019  |  ICD-9   |    68 times  |  Unspecified essential hypertension
+        E785  |  ICD-10  |    57 times  |  Hyperlipidemia, unspecified
+        2724  |  ICD-9   |    55 times  |  Other and unspecified hyperlipidemia
+        E039  |  ICD-10  |    47 times  |  Hypothyroidism, unspecified
+        Z794  |  ICD-10  |    37 times  |  Long term (current) use of insulin
 
 5. DIAGNOSES PER PATIENT
   Average diagnoses per patient: 45.1
