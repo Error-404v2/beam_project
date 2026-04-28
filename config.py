@@ -4,18 +4,33 @@ Configuration module.
 Contains file paths, options, and constants used across the pipeline.
 """
 
-DATA_DIR = "input/data/mimic-iv-clinical-database-demo-2.2/hosp"
-PATIENTS_CSV  = f"{DATA_DIR}/patients.csv"
-DIAGNOSES_CSV = f"{DATA_DIR}/diagnoses_icd.csv"
-LOOKUP_CSV    = f"{DATA_DIR}/d_icd_diagnoses.csv"
+LOCAL_DATA_DIR = "input/data/mimic-iv-clinical-database-demo-2.2/hosp"
+GCS_DATA_DIR = "gs://cloudypedia-intern-hospital-data/hosp"
 
-OUTPUT_FILE = "output/profiling_report.txt"
-DLQ_PATIENTS_FILE = "output/dlq_patients.txt"
-DLQ_DIAGNOSES_FILE = "output/dlq_diagnoses.txt"
-DLQ_LOOKUP_FILE = "output/dlq_lookup.txt"
-GENERATED_OUTPUTS = [
-    OUTPUT_FILE,
-    DLQ_PATIENTS_FILE,
-    DLQ_DIAGNOSES_FILE,
-    DLQ_LOOKUP_FILE,
-]
+DEFAULT_INPUT_SOURCE = "local"
+INPUT_SOURCES = {
+    "local": LOCAL_DATA_DIR,
+    "gcs": GCS_DATA_DIR,
+}
+
+def get_input_paths(input_source=DEFAULT_INPUT_SOURCE):
+    """Return the three input CSV paths for a configured source."""
+    try:
+        data_dir = INPUT_SOURCES[input_source]
+    except KeyError as exc:
+        valid_sources = ", ".join(sorted(INPUT_SOURCES))
+        raise ValueError(
+            f"Unknown input source '{input_source}'. Use one of: {valid_sources}."
+        ) from exc
+
+    return {
+        "patients": f"{data_dir}/patients.csv",
+        "diagnoses": f"{data_dir}/diagnoses_icd.csv",
+        "lookup": f"{data_dir}/d_icd_diagnoses.csv",
+    }
+
+# BigQuery Settings
+BQ_PROJECT = "cloudypedia-intern"
+BQ_DATASET = "hospital_profiling"
+BQ_SUMMARY_TABLE = f"{BQ_PROJECT}:{BQ_DATASET}.summary_stats"
+BQ_TOP_DIAG_TABLE = f"{BQ_PROJECT}:{BQ_DATASET}.top_diagnoses"

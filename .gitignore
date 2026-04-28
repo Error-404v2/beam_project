@@ -1,3 +1,19 @@
+# Python
 __pycache__/
-output/*
-.gemini/*
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual Environments
+venv/
+.env/
+
+# Beam / Dataflow
+beam-temp-*/
+.beam/
+
+# Project Specific
+output/

@@ -1,128 +1,125 @@
 # Hospital Data Profiling with Apache Beam
 
-A batch data pipeline built with **Apache Beam**. It reads hospital records from the
-[MIMIC-IV Clinical Database Demo](https://physionet.org/content/mimic-iv-demo/2.2/)
-and generates a plain-text data profiling report.
+A production-ready, cloud-native data profiling pipeline for the MIMIC-IV Clinical Database Demo. Built with **Apache Beam**, runs on **Google Cloud Dataflow**, and sinks results directly into **BigQuery**. Automatically re-runs whenever source data is updated in GCS, via a serverless **Cloud Function** trigger.
+
+---
 
 ## What It Does
 
-The project contains one profiling pipeline:
+Reads three MIMIC-IV CSV files (patients, diagnoses, ICD lookup), computes profiling metrics with **patient-level deduplication** (a patient with 10 visits for the same condition counts as 1), and outputs results exclusively to **BigQuery**.
 
-| Entry Point | Output | Purpose |
-| --- | --- | --- |
-| `main.py` | `output/profiling_report.txt` | Generates a six-section profiling report for the MIMIC-IV demo hospital data |
+| Environment | Output |
+|---|---|
+| **Local** (DirectRunner) | BigQuery tables `summary_stats` + `top_diagnoses` |
+| **Cloud** (DataflowRunner) | BigQuery tables `summary_stats` + `top_diagnoses` |
 
-### Profiling Report Sections
+### Report Sections
+1. **Dataset Overview** — total patients, unique diagnoses, unique ICD codes
+2. **Gender Distribution** — male vs female counts
+3. **Age Distribution** — min, max, average
+4. **Top 10 Diagnoses** — most frequent conditions with readable ICD names
+5. **Mortality Insight** — alive/deceased counts and mortality rate
 
-1. **Dataset Overview** - total patients, diagnosis records, and unique ICD code/version pairs
-2. **Gender Distribution** - count of male vs female patients
-3. **Age Distribution** - minimum, maximum, and average patient age
-4. **Top 10 Diagnoses** - most frequent ICD code/version pairs with readable names
-5. **Diagnoses per Patient** - average number of diagnoses per patient
-6. **Mortality Insight** - alive vs deceased count and mortality rate
+---
 
 ## Project Structure
 
-```text
-main.py                 # Entry point for the profiling pipeline
-pipeline.py             # Apache Beam graph
-schemas.py              # CSV parsers and output formatting helpers
-transforms.py           # Reusable CombineFn implementations
-config.py               # Input and output paths
-requirements.txt        # Python dependencies
-input/data/             # MIMIC-IV demo CSV files
-output/                 # Generated reports and dead-letter queue files
+```
+beam_project/
+├── main.py           # Entry point — arg parsing, env detection, pipeline orchestration
+├── pipeline.py       # Beam graph — read, deduplicate, compute, sink to BQ
+├── config.py         # All paths and BigQuery table identifiers
+├── schemas.py        # CSV row parsers for patients, diagnoses, lookup
+├── transforms.py     # Custom CombineFns: CountFn, AverageFn, MinMaxFn
+├── utils.py          # Env detection, runner normalization, workspace cleanup
+├── setup.py          # Packages modules for remote Dataflow workers
+├── trigger_cf.py     # Cloud Function source — triggers Dataflow on GCS file changes
+├── .gitignore        # Excludes __pycache__, *.egg-info, beam-temp-*
+├── requirements.txt  # Python dependencies
+└── REBUILD_GUIDE.md  # Step-by-step guide to rebuild the entire GCP setup from scratch
 ```
 
-## Dataset
-
-The pipeline uses the **MIMIC-IV Clinical Database Demo v2.2**, which contains
-de-identified hospital records for 100 patients. It reads three CSV files:
-
-- `patients.csv` - patient demographics: gender, anchor age, and date of death
-- `diagnoses_icd.csv` - diagnosis records linked to hospital admissions
-- `d_icd_diagnoses.csv` - lookup table mapping ICD code/version pairs to readable names
-
-ICD code and ICD version are treated together as the lookup key. This avoids mixing
-ICD-9 and ICD-10 descriptions when the same code text exists in both versions.
-
-## Setup
-
-The project is tested with the `DataEng` conda environment.
-
-```bash
-conda activate DataEng
-python -m pip install -r requirements.txt
-```
+---
 
 ## How to Run
 
+> [!IMPORTANT]
+> Because this pipeline uses `WRITE_TRUNCATE` for BigQuery, a GCS temporary location is **required** even for local execution.
+
+### Locally (DirectRunner)
 ```bash
-python main.py
+conda activate DataEng
+python main.py --temp_location gs://cloudypedia-intern-hospital-data/temp
 ```
 
-The run writes:
+### On Google Cloud Dataflow (manual)
+```bash
+conda activate DataEng
+python main.py \
+  --input-source gcs \
+  --project cloudypedia-intern \
+  --region me-central1 \
+  --temp_location gs://cloudypedia-intern-hospital-data/temp \
+  --staging_location gs://cloudypedia-intern-hospital-data/staging \
+  --setup_file ./setup.py
+```
 
-- `output/profiling_report.txt`
-- `output/dlq_patients.txt`
-- `output/dlq_diagnoses.txt`
-- `output/dlq_lookup.txt`
+### Automated (no command needed)
+Upload or re-upload any file to `gs://cloudypedia-intern-hospital-data/hosp/`.  
+The Cloud Function detects the change and launches Dataflow automatically.
 
-The DLQ files are empty when all parsed rows pass validation.
+### Syncing Local Code to the Cloud
+If you modify `pipeline.py`, `schemas.py`, or any other logic, the cloud environment will **not** automatically run the new code. You must rebuild the Dataflow Template to sync your changes to the cloud:
+
+```bash
+conda activate DataEng
+python main.py \
+  --input-source gcs \
+  --project cloudypedia-intern \
+  --region me-central1 \
+  --temp_location gs://cloudypedia-intern-hospital-data/temp \
+  --staging_location gs://cloudypedia-intern-hospital-data/staging \
+  --setup_file ./setup.py \
+  --runner DataflowRunner \
+  --template_location gs://cloudypedia-intern-hospital-data/templates/hospital_profiling_v1
+```
+After running this, any new files uploaded to the bucket will trigger Dataflow using your updated code.
+
+---
 
 ## Beam Concepts Used
 
-| Concept | What It Does |
-| --- | --- |
-| `ReadFromText` | Reads CSV files line by line |
-| `FlatMap` | Parses records and routes invalid rows to tagged DLQ outputs |
-| `Map` | Transforms each element |
-| `Filter` | Keeps elements that match a condition |
-| `CombinePerKey(sum)` | Groups by key and sums values |
-| `CombineGlobally` | Aggregates all elements into one result |
-| `CombineFn` | Custom aggregation logic: `CountFn`, `AverageFn`, `MinMaxFn` |
-| `Top.Of` | Finds the top N elements with a deterministic tie-breaker |
-| `Distinct` | Removes duplicate elements |
-| `Side Input (AsDict)` | Passes the ICD lookup table to a transform |
-| `WriteToText` | Writes the report and DLQ files |
+| Concept | Where Used |
+|---|---|
+| `ReadFromText` | Reading CSV files from local disk or GCS |
+| `FlatMap` | Parsing rows, tagging valid data |
+| `Distinct` | Deduplicating diagnoses per patient |
+| `CombineGlobally` / `CombinePerKey` | Aggregating stats across the dataset |
+| `CombineFn` | Custom `CountFn`, `AverageFn`, `MinMaxFn` |
+| `Top.Of` | Finding the top 10 diagnoses |
+| `AsSingleton` / `AsList` / `AsDict` | Passing side inputs into transforms |
+| `WriteToBigQuery` | Sinking structured metrics to the data warehouse |
 
-## Sample Output
+---
 
-```text
-============================================================
-        DATA PROFILING REPORT  -  MIMIC-IV Demo
-============================================================
+## GCP Infrastructure
 
-1. DATASET OVERVIEW
-  Total patients                 : 100
-  Total diagnosis records        : 4506
-  Unique ICD code/version pairs  : 1474
+| Resource | Name / ID |
+|---|---|
+| GCS Bucket | `cloudypedia-intern-hospital-data` |
+| BigQuery Dataset | `hospital_profiling` |
+| BigQuery Tables | `summary_stats`, `top_diagnoses` |
+| Dataflow Template | `gs://.../templates/hospital_profiling_v1` |
+| Cloud Function | `hospital-auto-trigger` (Gen 2, `me-central1`) |
 
-2. GENDER DISTRIBUTION
-  Female  : 43
-  Male    : 57
+See `REBUILD_GUIDE.md` to recreate this infrastructure from scratch.
 
-3. AGE DISTRIBUTION
-  Minimum age : 21
-  Maximum age : 91
-  Average age : 61.8
+---
 
-4. TOP 10 DIAGNOSES
-        Code  |  Version  |  Freq       |  Description
-    ------------------------------------------------------------------------
-        4019  |  ICD-9   |    68 times  |  Unspecified essential hypertension
-        E785  |  ICD-10  |    57 times  |  Hyperlipidemia, unspecified
-        2724  |  ICD-9   |    55 times  |  Other and unspecified hyperlipidemia
-        E039  |  ICD-10  |    47 times  |  Hypothyroidism, unspecified
-        Z794  |  ICD-10  |    37 times  |  Long term (current) use of insulin
+## Dataset
 
-5. DIAGNOSES PER PATIENT
-  Average diagnoses per patient: 45.1
+**MIMIC-IV Clinical Database Demo v2.2** — 100 de-identified patients.
 
-6. MORTALITY INSIGHT
-  Alive    : 69
-  Deceased : 31
-  Mortality rate: 31.0%
-
-============================================================
-```
+- `patients.csv` — gender, anchor age, date of death
+- `diagnoses_icd.csv` — diagnosis records per hospital admission
+- `d_icd_diagnoses.csv` — ICD code → readable description lookup
