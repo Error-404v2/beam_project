@@ -1,6 +1,1 @@
 apache-beam[gcp]==2.72.0
-pandas==3.0.2
-matplotlib==3.10.9
-seaborn==0.13.2
-jupyter==1.1.1
-networkx==3.6.1

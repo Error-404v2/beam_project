@@ -80,8 +80,127 @@ def parse_lookup(line):
     except Exception as e:
         yield beam.pvalue.TaggedOutput("invalid", f"Error: {e} | Line: {line}")
 
-def format_top_diagnosis(kv, lookup_dict):
-    """Format one top-diagnosis entry into a readable string."""
-    (code, version), count = kv
-    name = lookup_dict.get((code, version), "Unknown")
-    return f"    {code:>8s}  |  ICD-{version:<2s}  |  {count:>4d} times  |  {name}"
+def parse_transfer(line):
+    """Turn a transfer row into a contact/admission event."""
+    try:
+        row = next(csv.reader([line]))
+
+        if len(row) < 7:
+            raise ValueError(f"Expected 7 columns, got {len(row)}")
+        if not row[0] or not row[0].isdigit():
+            raise ValueError("Invalid subject_id")
+        if not row[3]:
+            raise ValueError("Missing eventtype")
+        if not row[5]:
+            raise ValueError("Missing intime")
+
+        yield {
+            "subject_id": row[0].strip(),
+            "hadm_id": row[1].strip(),
+            "transfer_id": row[2].strip(),
+            "eventtype": row[3].strip(),
+            "careunit": row[4].strip(),
+            "intime": row[5].strip(),
+            "outtime": row[6].strip(),
+        }
+    except Exception as e:
+        yield beam.pvalue.TaggedOutput("invalid", f"Error: {e} | Line: {line}")
+
+
+def parse_procedure(line):
+    """Pull out a patient procedure code."""
+    try:
+        row = next(csv.reader([line]))
+
+        if len(row) < 6:
+            raise ValueError(f"Expected 6 columns, got {len(row)}")
+        if not row[0] or not row[0].isdigit():
+            raise ValueError("Invalid subject_id")
+        if not row[1]:
+            raise ValueError("Missing hadm_id")
+        if not row[4]:
+            raise ValueError("Missing icd_code")
+        if row[5] not in ["9", "10"]:
+            raise ValueError(f"Invalid icd_version: {row[5]}")
+
+        yield {
+            "subject_id": row[0].strip(),
+            "hadm_id": row[1].strip(),
+            "icd_code": row[4].strip(),
+            "icd_version": row[5].strip(),
+        }
+    except Exception as e:
+        yield beam.pvalue.TaggedOutput("invalid", f"Error: {e} | Line: {line}")
+
+
+def parse_prescription(line):
+    """Pull out a patient medication order."""
+    try:
+        row = next(csv.reader([line]))
+
+        if len(row) < 10:
+            raise ValueError(f"Expected at least 10 columns, got {len(row)}")
+        if not row[0] or not row[0].isdigit():
+            raise ValueError("Invalid subject_id")
+        if not row[9]:
+            raise ValueError("Missing drug")
+
+        yield {
+            "subject_id": row[0].strip(),
+            "hadm_id": row[1].strip(),
+            "drug": row[9].strip(),
+            "drug_normalized": row[9].strip().lower(),
+        }
+    except Exception as e:
+        yield beam.pvalue.TaggedOutput("invalid", f"Error: {e} | Line: {line}")
+
+
+def parse_lab_event(line):
+    """Return numeric lab history rows for patient-level trends."""
+    try:
+        row = next(csv.reader([line]))
+
+        if len(row) < 16:
+            raise ValueError(f"Expected 16 columns, got {len(row)}")
+        if not row[1] or not row[1].isdigit():
+            raise ValueError("Invalid subject_id")
+        if not row[4]:
+            raise ValueError("Missing itemid")
+        if not row[6]:
+            raise ValueError("Missing charttime")
+        if not row[9]:
+            raise ValueError("Missing valuenum")
+
+        yield {
+            "subject_id": row[1].strip(),
+            "hadm_id": row[2].strip(),
+            "itemid": row[4].strip(),
+            "charttime": row[6].strip(),
+            "value": row[8].strip(),
+            "valuenum": float(row[9]),
+            "valueuom": row[10].strip(),
+            "flag": row[13].strip(),
+        }
+    except Exception as e:
+        yield beam.pvalue.TaggedOutput("invalid", f"Error: {e} | Line: {line}")
+
+
+def parse_lab_lookup(line):
+    """Return itemid -> lab label metadata."""
+    try:
+        row = next(csv.reader([line]))
+
+        if len(row) < 4:
+            raise ValueError(f"Expected 4 columns, got {len(row)}")
+        if not row[0]:
+            raise ValueError("Missing itemid")
+        if not row[1]:
+            raise ValueError("Missing label")
+
+        yield (row[0].strip(), {
+            "label": row[1].strip(),
+            "fluid": row[2].strip(),
+            "category": row[3].strip(),
+        })
+    except Exception as e:
+        yield beam.pvalue.TaggedOutput("invalid", f"Error: {e} | Line: {line}")

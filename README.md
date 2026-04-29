@@ -1,80 +1,82 @@
-# Hospital Data Profiling with Apache Beam
+# Patient-Centric MIMIC Dashboard Pipeline
 
-A production-ready, cloud-native data profiling pipeline for the MIMIC-IV Clinical Database Demo. Built with **Apache Beam**, runs on **Google Cloud Dataflow**, and sinks results directly into **BigQuery**. Automatically re-runs whenever source data is updated in GCS, via a serverless **Cloud Function** trigger.
-
----
+A compact Apache Beam pipeline for the MIMIC-IV Clinical Database Demo. It runs locally with DirectRunner for validation, runs on Google Cloud Dataflow for production, and writes Looker Studio-ready tables to BigQuery.
 
 ## What It Does
 
-Reads three MIMIC-IV CSV files (patients, diagnoses, ICD lookup), computes profiling metrics with **patient-level deduplication** (a patient with 10 visits for the same condition counts as 1), and outputs results exclusively to **BigQuery**.
+The pipeline reads MIMIC hospital CSV files, keeps patient-level diagnosis deduplication, and creates both global profiling outputs and patient-centric dashboard marts.
 
-| Environment | Output |
+Existing profiling outputs:
+
+| BigQuery table | Purpose |
 |---|---|
-| **Local** (DirectRunner) | BigQuery tables `summary_stats` + `top_diagnoses` |
-| **Cloud** (DataflowRunner) | BigQuery tables `summary_stats` + `top_diagnoses` |
+| `summary_stats` | Total patients, unique diagnoses, age stats, alive/deceased counts, mortality rate |
+| `top_diagnoses` | Top diagnosis codes with readable ICD descriptions |
 
-### Report Sections
-1. **Dataset Overview** — total patients, unique diagnoses, unique ICD codes
-2. **Gender Distribution** — male vs female counts
-3. **Age Distribution** — min, max, average
-4. **Top 10 Diagnoses** — most frequent conditions with readable ICD names
-5. **Mortality Insight** — alive/deceased counts and mortality rate
+Dashboard outputs:
 
----
+| BigQuery table | Purpose |
+|---|---|
+| `patient_dashboard_summary` | One row per patient with first contact, admissions, procedures, meds, and diagnoses |
+| `patient_admissions_timeline` | One row per patient admission for admissions-over-year charts |
+| `patient_lab_history` | Numeric lab history joined to lab labels for trend charts |
+
+## Patient Metrics
+
+- Patient ID: `subject_id`
+- First contact: earliest `transfers.intime`
+- Admissions: distinct `hadm_id` values from `transfers.csv`
+- Procedures: distinct `(hadm_id, icd_code, icd_version)` from `procedures_icd.csv`
+- Unique meds dispensed: distinct normalized `drug` values from `prescriptions.csv`
+- Unique diagnoses: distinct `(subject_id, icd_code, icd_version)`, so repeat admissions do not inflate the count
+- Labs: numeric `labevents.valuenum` rows joined to `d_labitems.csv`
 
 ## Project Structure
 
-```
+```text
 beam_project/
-├── main.py           # Entry point — arg parsing, env detection, pipeline orchestration
-├── pipeline.py       # Beam graph — read, deduplicate, compute, sink to BQ
-├── config.py         # All paths and BigQuery table identifiers
-├── schemas.py        # CSV row parsers for patients, diagnoses, lookup
-├── transforms.py     # Custom CombineFns: CountFn, AverageFn, MinMaxFn
-├── utils.py          # Env detection, runner normalization, workspace cleanup
-├── setup.py          # Packages modules for remote Dataflow workers
-├── trigger_cf.py     # Cloud Function source — triggers Dataflow on GCS file changes
-├── .gitignore        # Excludes __pycache__, *.egg-info, beam-temp-*
-├── requirements.txt  # Python dependencies
-└── REBUILD_GUIDE.md  # Step-by-step guide to rebuild the entire GCP setup from scratch
+|-- main.py           # Entry point and app-specific CLI options
+|-- pipeline.py       # Beam graph: read, transform, write
+|-- config.py         # Input paths and BigQuery table identifiers
+|-- schemas.py        # CSV row parsers
+|-- transforms.py     # Custom CombineFns
+|-- utils.py          # Logging and workspace cleanup
+|-- setup.py          # Packages modules for remote Dataflow workers
+|-- trigger_cf.py     # Cloud Function source for GCS-triggered Dataflow runs
+|-- requirements.txt  # Runtime dependency list
+`-- REBUILD_GUIDE.md  # GCP rebuild instructions
 ```
-
----
 
 ## How to Run
 
-> [!IMPORTANT]
-> Because this pipeline uses `WRITE_TRUNCATE` for BigQuery, a GCS temporary location is **required** even for local execution.
+### Local validation
 
-### Locally (DirectRunner)
+Writes JSONL files under `output/` without touching BigQuery.
+
 ```bash
 conda activate DataEng
-python main.py --temp_location gs://cloudypedia-intern-hospital-data/temp
+python main.py --input-source local --output-mode local --runner DirectRunner
 ```
 
-### On Google Cloud Dataflow (manual)
-```bash
-conda activate DataEng
-python main.py \
-  --input-source gcs \
-  --project cloudypedia-intern \
-  --region me-central1 \
-  --temp_location gs://cloudypedia-intern-hospital-data/temp \
-  --staging_location gs://cloudypedia-intern-hospital-data/staging \
-  --setup_file ./setup.py
-```
-
-### Automated (no command needed)
-Upload or re-upload any file to `gs://cloudypedia-intern-hospital-data/hosp/`.  
-The Cloud Function detects the change and launches Dataflow automatically.
-
-### Syncing Local Code to the Cloud
-If you modify `pipeline.py`, `schemas.py`, or any other logic, the cloud environment will **not** automatically run the new code. You must rebuild the Dataflow Template to sync your changes to the cloud:
+### BigQuery write from local machine
 
 ```bash
 conda activate DataEng
 python main.py \
   --input-source gcs \
+  --output-mode bigquery \
+  --temp_location gs://cloudypedia-intern-hospital-data/temp
+```
+
+### Dataflow template build
+
+Run this whenever pipeline code changes.
+
+```bash
+conda activate DataEng
+python main.py \
+  --input-source gcs \
+  --output-mode bigquery \
   --project cloudypedia-intern \
   --region me-central1 \
   --temp_location gs://cloudypedia-intern-hospital-data/temp \
@@ -83,43 +85,16 @@ python main.py \
   --runner DataflowRunner \
   --template_location gs://cloudypedia-intern-hospital-data/templates/hospital_profiling_v1
 ```
-After running this, any new files uploaded to the bucket will trigger Dataflow using your updated code.
-
----
-
-## Beam Concepts Used
-
-| Concept | Where Used |
-|---|---|
-| `ReadFromText` | Reading CSV files from local disk or GCS |
-| `FlatMap` | Parsing rows, tagging valid data |
-| `Distinct` | Deduplicating diagnoses per patient |
-| `CombineGlobally` / `CombinePerKey` | Aggregating stats across the dataset |
-| `CombineFn` | Custom `CountFn`, `AverageFn`, `MinMaxFn` |
-| `Top.Of` | Finding the top 10 diagnoses |
-| `AsSingleton` / `AsList` / `AsDict` | Passing side inputs into transforms |
-| `WriteToBigQuery` | Sinking structured metrics to the data warehouse |
-
----
-
-## GCP Infrastructure
-
-| Resource | Name / ID |
-|---|---|
-| GCS Bucket | `cloudypedia-intern-hospital-data` |
-| BigQuery Dataset | `hospital_profiling` |
-| BigQuery Tables | `summary_stats`, `top_diagnoses` |
-| Dataflow Template | `gs://.../templates/hospital_profiling_v1` |
-| Cloud Function | `hospital-auto-trigger` (Gen 2, `me-central1`) |
-
-See `REBUILD_GUIDE.md` to recreate this infrastructure from scratch.
-
----
 
 ## Dataset
 
-**MIMIC-IV Clinical Database Demo v2.2** — 100 de-identified patients.
+Uses the MIMIC-IV Clinical Database Demo v2.2 hospital files:
 
-- `patients.csv` — gender, anchor age, date of death
-- `diagnoses_icd.csv` — diagnosis records per hospital admission
-- `d_icd_diagnoses.csv` — ICD code → readable description lookup
+- `patients.csv`
+- `diagnoses_icd.csv`
+- `d_icd_diagnoses.csv`
+- `transfers.csv`
+- `procedures_icd.csv`
+- `prescriptions.csv`
+- `labevents.csv`
+- `d_labitems.csv`
