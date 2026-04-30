@@ -4,14 +4,8 @@ Configuration module.
 Contains file paths, options, and constants used across the pipeline.
 """
 
-LOCAL_DATA_DIR = "input/data/mimic-iv-clinical-database-demo-2.2/hosp"
 GCS_DATA_DIR = "gs://cloudypedia-intern-hospital-data/hosp"
-
-DEFAULT_INPUT_SOURCE = "gcs"
-INPUT_SOURCES = {
-    "local": LOCAL_DATA_DIR,
-    "gcs": GCS_DATA_DIR,
-}
+GCS_TEMP_LOCATION = "gs://cloudypedia-intern-hospital-data/temp"
 
 INPUT_FILES = {
     "patients": "patients.csv",
@@ -25,18 +19,11 @@ INPUT_FILES = {
 }
 
 
-def get_input_paths(input_source=DEFAULT_INPUT_SOURCE):
-    """Return input CSV paths for a configured source."""
-    try:
-        data_dir = INPUT_SOURCES[input_source]
-    except KeyError as exc:
-        valid_sources = ", ".join(sorted(INPUT_SOURCES))
-        raise ValueError(
-            f"Unknown input source '{input_source}'. Use one of: {valid_sources}."
-        ) from exc
+def get_input_paths():
+    """Return input CSV paths from GCS."""
 
     return {
-        name: f"{data_dir}/{file_name}"
+        name: f"{GCS_DATA_DIR}/{file_name}"
         for name, file_name in INPUT_FILES.items()
     }
 

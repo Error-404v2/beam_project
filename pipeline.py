@@ -35,7 +35,7 @@ def first_or_default(values, default=0):
     return values[0] if values else default
 
 
-def build_pipeline(p, input_paths, output_mode="bigquery"):
+def build_pipeline(p, input_paths):
     """Build the profiling and patient-dashboard pipeline."""
 
     # --- 1. READ & PARSE ---
@@ -90,7 +90,6 @@ def build_pipeline(p, input_paths, output_mode="bigquery"):
     )[None]
 
     # --- 2. CALCULATE METRICS ---
-    total_patients = patients | "Count Patients" >> beam.CombineGlobally(CountFn())
     total_diagnoses = diagnoses | "Count Unique Diagnoses" >> beam.CombineGlobally(CountFn())
     unique_codes = (
         diagnoses
@@ -98,15 +97,6 @@ def build_pipeline(p, input_paths, output_mode="bigquery"):
         | "Distinct Codes" >> beam.Distinct()
         | "Count Codes" >> beam.CombineGlobally(CountFn())
     )
-
-    gender_counts = (
-        patients | "Get Gender" >> beam.Map(lambda p: (p["gender"], 1))
-                 | "Sum Gender" >> beam.CombinePerKey(sum)
-    )
-
-    ages = patients | "Get Age" >> beam.Map(lambda p: p["age"])
-    age_avg = ages | "Avg Age" >> beam.CombineGlobally(AverageFn())
-    age_range = ages | "MinMax Age" >> beam.CombineGlobally(MinMaxFn())
 
     top_10_raw = (
         diagnoses
@@ -116,49 +106,23 @@ def build_pipeline(p, input_paths, output_mode="bigquery"):
         | "Flatten Top" >> beam.FlatMap(lambda x: x)
     )
 
-    diag_per_patient = (
-        diagnoses | "Diag Per Patient" >> beam.Map(lambda d: (d["subject_id"], 1))
-                  | "Sum Per Patient" >> beam.CombinePerKey(sum)
-                  | "Values Only" >> beam.Values()
-                  | "Avg Diag" >> beam.CombineGlobally(AverageFn())
-    )
-
-    alive = patients | "Filt Alive" >> beam.Filter(lambda p: p["dod"] == "") | "Cnt Alive" >> beam.CombineGlobally(CountFn())
-    deceased = patients | "Filt Dec" >> beam.Filter(lambda p: p["dod"] != "") | "Cnt Dec" >> beam.CombineGlobally(CountFn())
-
     # --- 3. FORMAT FOR BIGQUERY ---
-    def prepare_summary(element, tp, td, uc, gc_list, aa, ar, dpp, al, dec):
-        # Convert gender counts list to a dictionary for easier access
-        gc_dict = dict(gc_list)
-        return [{
-            "timestamp": RUN_TIMESTAMP,
-            "total_patients": tp,
-            "total_diagnoses": td,
-            "unique_codes": uc,
-            "avg_age": aa,
-            "min_age": int(ar["min"]),
-            "max_age": int(ar["max"]),
-            "avg_diag_per_patient": dpp,
-            "female_count": gc_dict.get('F', 0),
-            "male_count": gc_dict.get('M', 0),
-            "alive_count": al,
-            "deceased_count": dec,
-            "mortality_rate": round(dec / (al + dec) * 100, 2) if (al + dec) else 0
-        }]
+    def prepare_summary(element, td, uc):
+        stats = [
+            ("total_diagnoses", float(td)),
+            ("unique_codes", float(uc)),
+        ]
+        return [
+            {"timestamp": RUN_TIMESTAMP, "stat_name": name, "stat_value": value}
+            for name, value in stats
+        ]
 
     summary_bq = (
         p | "Trigger Summary" >> beam.Create([None])
           | "Prepare BQ Summary" >> beam.FlatMap(
               prepare_summary,
-              tp=beam.pvalue.AsSingleton(total_patients),
               td=beam.pvalue.AsSingleton(total_diagnoses),
-              uc=beam.pvalue.AsSingleton(unique_codes),
-              gc_list=beam.pvalue.AsList(gender_counts),
-              aa=beam.pvalue.AsSingleton(age_avg),
-              ar=beam.pvalue.AsSingleton(age_range),
-              dpp=beam.pvalue.AsSingleton(diag_per_patient),
-              al=beam.pvalue.AsSingleton(alive),
-              dec=beam.pvalue.AsSingleton(deceased)
+              uc=beam.pvalue.AsSingleton(unique_codes)
           )
     )
 
@@ -314,11 +278,7 @@ def build_pipeline(p, input_paths, output_mode="bigquery"):
     # --- 5. SINK OUTPUTS ---
     logging.info("Configuring sinks for profiling and patient dashboard outputs.")
     
-    summary_schema = (
-        "timestamp:TIMESTAMP,total_patients:INTEGER,total_diagnoses:INTEGER,unique_codes:INTEGER,"
-        "avg_age:FLOAT,min_age:INTEGER,max_age:INTEGER,avg_diag_per_patient:FLOAT,"
-        "female_count:INTEGER,male_count:INTEGER,alive_count:INTEGER,deceased_count:INTEGER,mortality_rate:FLOAT"
-    )
+    summary_schema = "timestamp:TIMESTAMP,stat_name:STRING,stat_value:FLOAT"
 
     patient_dashboard_schema = (
         "subject_id:STRING,gender:STRING,age:INTEGER,is_alive:BOOLEAN,dod:DATE,"
@@ -336,24 +296,6 @@ def build_pipeline(p, input_paths, output_mode="bigquery"):
         "lab_category:STRING,charttime:TIMESTAMP,value:STRING,valuenum:FLOAT,valueuom:STRING,"
         "is_abnormal:BOOLEAN,flag:STRING"
     )
-
-    if output_mode == "local":
-        summary_bq | "JSON Local Summary" >> beam.Map(json.dumps) | "Write Local Summary" >> beam.io.WriteToText(
-            f"output/summary_stats_{LOCAL_RUN_ID}", file_name_suffix=".jsonl"
-        )
-        top_10_bq | "JSON Local Top Diags" >> beam.Map(json.dumps) | "Write Local Top Diags" >> beam.io.WriteToText(
-            f"output/top_diagnoses_{LOCAL_RUN_ID}", file_name_suffix=".jsonl"
-        )
-        patient_dashboard | "JSON Local Patient Dashboard" >> beam.Map(json.dumps) | "Write Local Patient Dashboard" >> beam.io.WriteToText(
-            f"output/patient_dashboard_summary_{LOCAL_RUN_ID}", file_name_suffix=".jsonl"
-        )
-        admissions_timeline | "JSON Local Admissions Timeline" >> beam.Map(json.dumps) | "Write Local Admissions Timeline" >> beam.io.WriteToText(
-            f"output/patient_admissions_timeline_{LOCAL_RUN_ID}", file_name_suffix=".jsonl"
-        )
-        lab_history | "JSON Local Lab History" >> beam.Map(json.dumps) | "Write Local Lab History" >> beam.io.WriteToText(
-            f"output/patient_lab_history_{LOCAL_RUN_ID}", file_name_suffix=".jsonl"
-        )
-        return
 
     summary_bq | "Write Summary to BQ" >> beam.io.WriteToBigQuery(
         BQ_SUMMARY_TABLE,
