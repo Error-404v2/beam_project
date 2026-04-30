@@ -49,24 +49,14 @@ beam_project/
 
 ## How to Run
 
-### Local validation
-
-Writes JSONL files under `output/` without touching BigQuery.
-
-```bash
-conda activate DataEng
-python main.py --input-source local --output-mode local --runner DirectRunner
-```
-
 ### BigQuery write from local machine
 
 ```bash
 conda activate DataEng
-python main.py \
-  --input-source gcs \
-  --output-mode bigquery \
-  --temp_location gs://cloudypedia-intern-hospital-data/temp
+python main.py
 ```
+
+The pipeline writes dashboard tables to BigQuery. It does not write local JSONL files to `output/`.
 
 ### Dataflow template build
 
@@ -75,11 +65,8 @@ Run this whenever pipeline code changes.
 ```bash
 conda activate DataEng
 python main.py \
-  --input-source gcs \
-  --output-mode bigquery \
   --project cloudypedia-intern \
   --region me-central1 \
-  --temp_location gs://cloudypedia-intern-hospital-data/temp \
   --staging_location gs://cloudypedia-intern-hospital-data/staging \
   --setup_file ./setup.py \
   --runner DataflowRunner \

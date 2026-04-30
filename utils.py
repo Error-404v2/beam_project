@@ -39,20 +39,24 @@ def normalize_beam_args(beam_args):
 
 def cleanup_temp():
     """Remove Beam temporary directories and .egg-info metadata."""
-    root_dir = "."
-    for name in os.listdir(root_dir):
-        path = os.path.join(root_dir, name)
+    cleanup_dirs = [".", "output"]
+    for root_dir in cleanup_dirs:
+        if not os.path.isdir(root_dir):
+            continue
+
+        for name in os.listdir(root_dir):
+            path = os.path.join(root_dir, name)
         # 1. Clean .egg-info from the root folder
-        if name.endswith(".egg-info") and os.path.isdir(path):
-            try:
-                shutil.rmtree(path)
-                logging.info("Cleaned up metadata: %s", name)
-            except Exception:
-                pass
+            if name.endswith(".egg-info") and os.path.isdir(path):
+                try:
+                    shutil.rmtree(path)
+                    logging.info("Cleaned up metadata: %s", path)
+                except Exception:
+                    pass
         # 2. Clean up any leftover beam-temp-* directories
-        elif name.startswith("beam-temp-") and os.path.isdir(path):
-            try:
-                shutil.rmtree(path, onerror=lambda func, p, _: (os.chmod(p, 0o700), func(p)))
-                logging.info("Cleaned up temp directory: %s", name)
-            except Exception:
-                pass
+            elif name.startswith("beam-temp-") and os.path.isdir(path):
+                try:
+                    shutil.rmtree(path, onerror=lambda func, p, _: (os.chmod(p, 0o700), func(p)))
+                    logging.info("Cleaned up temp directory: %s", path)
+                except Exception:
+                    pass

@@ -73,20 +73,14 @@ The pipeline creates these tables automatically:
 - `patient_admissions_timeline`
 - `patient_lab_history`
 
-## 5. Validate Locally
+## 5. Run from Local Machine
 
 ```bash
 conda activate DataEng
-python main.py --input-source local --output-mode local --runner DirectRunner
+python main.py
 ```
 
-Expected local output prefixes:
-
-- `output/summary_stats*.jsonl`
-- `output/top_diagnoses*.jsonl`
-- `output/patient_dashboard_summary*.jsonl`
-- `output/patient_admissions_timeline*.jsonl`
-- `output/patient_lab_history*.jsonl`
+The pipeline reads from GCS and writes to BigQuery. It does not write local JSONL files to `output/`.
 
 ## 6. Build and Save the Dataflow Template
 
@@ -95,11 +89,8 @@ Run this every time the pipeline code changes.
 ```bash
 conda activate DataEng
 python main.py \
-  --input-source gcs \
-  --output-mode bigquery \
   --project cloudypedia-intern \
   --region me-central1 \
-  --temp_location gs://cloudypedia-intern-hospital-data/temp \
   --staging_location gs://cloudypedia-intern-hospital-data/staging \
   --setup_file ./setup.py \
   --runner DataflowRunner \
